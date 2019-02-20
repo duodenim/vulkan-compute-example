@@ -1,5 +1,5 @@
 [package]
-name = "rust-vulkan"
+name = "vulkan-compute-example"
 version = "0.1.0"
 authors = ["Joseph Schulte <schulteajoseph@gmail.com>"]
 edition = "2018"
