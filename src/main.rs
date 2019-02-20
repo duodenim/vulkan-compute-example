@@ -48,7 +48,6 @@ fn main() {
     let video_context = sdl_context.video().unwrap();
     let window = video_context.window("demo", 640, 480).vulkan().build().unwrap();
     let sdl_vk_exts = window.vulkan_instance_extensions().unwrap();
-    unsafe {
     let entry = Entry::new().unwrap();
     let app_name = CString::new("AshTest").unwrap();
     let layer_names = [CString::new("VK_LAYER_LUNARG_standard_validation").unwrap()];
@@ -69,20 +68,20 @@ fn main() {
         .enabled_layer_names(&layer_names_raw)
         .enabled_extension_names(&extension_names);
 
-    let instance = entry.create_instance(&inst_create_info, None).unwrap();
+    let instance = unsafe { entry.create_instance(&inst_create_info, None).unwrap() };
 
     let debug_info = vk::DebugReportCallbackCreateInfoEXT::builder()
         .flags(vk::DebugReportFlagsEXT::ERROR | vk::DebugReportFlagsEXT::WARNING | vk::DebugReportFlagsEXT::PERFORMANCE_WARNING)
         .pfn_callback(Some(vulkan_debug_callback));
 
     let debug_report_loader = DebugReport::new(&entry, &instance);
-    let debug_call_back = debug_report_loader.create_debug_report_callback(&debug_info, None).unwrap();
+    let debug_call_back = unsafe { debug_report_loader.create_debug_report_callback(&debug_info, None).unwrap() };
 
-    let pdevices = instance.enumerate_physical_devices().unwrap();
+    let pdevices = unsafe { instance.enumerate_physical_devices().unwrap() };
     println!("Available devices:");
     for pdev in pdevices.iter() {
-        let properties = instance.get_physical_device_properties(*pdev);
-        let name = CStr::from_ptr(properties.device_name.as_ptr());
+        let properties = unsafe { instance.get_physical_device_properties(*pdev) };
+        let name = unsafe { CStr::from_ptr(properties.device_name.as_ptr()) };
         println!("{:?}", name);
         println!("{:?}", properties.limits.point_size_range);
     }
@@ -93,11 +92,11 @@ fn main() {
     let inst_handle = instance.handle().as_raw() as usize;
     let surface_ext = Surface::new(&entry, &instance);
     let surface: vk::SurfaceKHR = vk::Handle::from_raw(window.vulkan_create_surface(inst_handle).unwrap());
-    let _surface_caps = surface_ext.get_physical_device_surface_capabilities(physical_device, surface).unwrap();
-    let surface_formats = surface_ext.get_physical_device_surface_formats(physical_device, surface).unwrap();
-    let _surface_present_modes = surface_ext.get_physical_device_surface_present_modes(physical_device, surface).unwrap();
+    let _surface_caps = unsafe { surface_ext.get_physical_device_surface_capabilities(physical_device, surface).unwrap() };
+    let surface_formats = unsafe { surface_ext.get_physical_device_surface_formats(physical_device, surface).unwrap() };
+    let _surface_present_modes = unsafe { surface_ext.get_physical_device_surface_present_modes(physical_device, surface).unwrap() };
 
-    let queue_props = instance.get_physical_device_queue_family_properties(physical_device);
+    let queue_props = unsafe { instance.get_physical_device_queue_family_properties(physical_device) };
 
     let mut queue_index = std::u32::MAX;
     let mut g_queue_index = std::u32::MAX;
@@ -105,7 +104,8 @@ fn main() {
         if queue.queue_flags.contains(vk::QueueFlags::COMPUTE) {
             queue_index = i as u32;
         }
-        if queue.queue_flags.contains(vk::QueueFlags::GRAPHICS) && surface_ext.get_physical_device_surface_support(physical_device, i as u32, surface) {
+        let supports_present = unsafe { surface_ext.get_physical_device_surface_support(physical_device, i as u32, surface) };
+        if queue.queue_flags.contains(vk::QueueFlags::GRAPHICS) && supports_present {
             g_queue_index = i as u32;
         }
     }
@@ -131,7 +131,7 @@ fn main() {
     let device_create_info = vk::DeviceCreateInfo::builder()
         .queue_create_infos(&queue_infos)
         .enabled_extension_names(&device_extensions);
-    let device = instance.create_device(physical_device, &device_create_info, None).unwrap();
+    let device = unsafe { instance.create_device(physical_device, &device_create_info, None).unwrap() };
 
     //Create memory allocator
     let mut allocator = {
@@ -143,33 +143,30 @@ fn main() {
             };
             vk_mem::Allocator::new(&create_info).unwrap()
     };
-    let queue = device.get_device_queue(queue_index, 0);
-    let graphics_queue = device.get_device_queue(g_queue_index, 0);
-    let pool: vk::CommandPool;
-    {
+    let queue = unsafe { device.get_device_queue(queue_index, 0) };
+    let graphics_queue = unsafe { device.get_device_queue(g_queue_index, 0) };
+    let pool = {
         let pool_create = vk::CommandPoolCreateInfo::builder()
             .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
             .queue_family_index(queue_index);
-        pool = device.create_command_pool(&pool_create, None).unwrap();
-    }
+        unsafe { device.create_command_pool(&pool_create, None).unwrap() }
+    };
 
-    let desc_pool: vk::DescriptorPool;
-    {
-        let desc_pool_size = vk::DescriptorPoolSize::builder()
+    let desc_pool = {
+        let desc_pool_size = [vk::DescriptorPoolSize::builder()
             .ty(vk::DescriptorType::STORAGE_BUFFER)
             .descriptor_count(1)
-            .build();
+            .build()];
 
         let create_info = vk::DescriptorPoolCreateInfo::builder()
-            .pool_sizes(&[desc_pool_size])
+            .pool_sizes(&desc_pool_size)
             .max_sets(1)
             .build();
 
-        desc_pool = device.create_descriptor_pool(&create_info, None).unwrap();
-    }
+        unsafe { device.create_descriptor_pool(&create_info, None).unwrap() }
+    };
 
     //Create swapchain
-
     let swapchain_ext = Swapchain::new(&instance, &device);
 
     for formats in surface_formats.iter() {
@@ -190,12 +187,11 @@ fn main() {
             .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
             .present_mode(vk::PresentModeKHR::FIFO)
             .clipped(true);
-        swapchain_ext.create_swapchain(&create_info, None).unwrap()
+        unsafe { swapchain_ext.create_swapchain(&create_info, None).unwrap() }
     };
 
-    let render_pass: vk::RenderPass;
-    {
-        let attachment = vk::AttachmentDescription::builder()
+    let render_pass = {
+        let attachment = [vk::AttachmentDescription::builder()
             .format(surface_formats[0].format)
             .samples(vk::SampleCountFlags::TYPE_1)
             .load_op(vk::AttachmentLoadOp::CLEAR)
@@ -204,17 +200,16 @@ fn main() {
             .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
             .initial_layout(vk::ImageLayout::UNDEFINED)
             .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)
-            .build();
+            .build()];
 
-        let attach_refs = &[vk::AttachmentReference::builder()
+        let attach_refs = [vk::AttachmentReference::builder()
             .attachment(0)
             .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
             .build()];
 
-        //println!("{:?}", attach_refs[0]);
-        let subpasses = &[vk::SubpassDescription::builder()
+        let subpasses = [vk::SubpassDescription::builder()
             .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-            .color_attachments(attach_refs)
+            .color_attachments(&attach_refs)
             .build()];
 
         let dependency = vk::SubpassDependency::builder()
@@ -243,15 +238,17 @@ fn main() {
             .dst_access_mask(barrier.dst_access_mask)
             .build();
 
-        let create_info = vk::RenderPassCreateInfo::builder()
-            .attachments(&[attachment])
-            .subpasses(subpasses)
-            .dependencies(&[dependency, compute_dependency])
-            .build();
-        render_pass = device.create_render_pass(&create_info, None).unwrap();
-    }
+        let dependencies = [dependency, compute_dependency];
 
-    let swapchain_images = swapchain_ext.get_swapchain_images(swapchain).unwrap();
+        let create_info = vk::RenderPassCreateInfo::builder()
+            .attachments(&attachment)
+            .subpasses(&subpasses)
+            .dependencies(&dependencies)
+            .build();
+        unsafe { device.create_render_pass(&create_info, None).unwrap() }
+    };
+
+    let swapchain_images = unsafe { swapchain_ext.get_swapchain_images(swapchain).unwrap() };
     let mut swapchain_image_views = Vec::new();
     let mut framebuffers = Vec::new();
 
@@ -268,48 +265,53 @@ fn main() {
                                 .base_array_layer(0)
                                 .layer_count(1)
                                 .build());
-        swapchain_image_views.push(device.create_image_view(&create_info, None).unwrap());
+        let iv = unsafe { device.create_image_view(&create_info, None).unwrap() };
+        swapchain_image_views.push(iv);
+
+        let attachments = [swapchain_image_views[i]];
 
         let create_info = vk::FramebufferCreateInfo::builder()
             .render_pass(render_pass)
-            .attachments(&[swapchain_image_views[i]])
+            .attachments(&attachments)
             .width(640)
             .height(480)
             .layers(1)
             .build();
 
-        framebuffers.push(device.create_framebuffer(&create_info, None).unwrap());
+        let fb = unsafe { device.create_framebuffer(&create_info, None).unwrap() };
+
+        framebuffers.push(fb);
     }
 
-    let desc_set_layout: vk::DescriptorSetLayout;
-    {
-        let binding = vk::DescriptorSetLayoutBinding::builder()
+    let desc_set_layout = {
+        let binding = [vk::DescriptorSetLayoutBinding::builder()
             .binding(0)
             .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
             .descriptor_count(1)
             .stage_flags(vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::VERTEX)
-            .build();
+            .build()];
         let create_info = vk::DescriptorSetLayoutCreateInfo::builder()
-            .bindings(&[binding])
+            .bindings(&binding)
             .build();
-        desc_set_layout = device.create_descriptor_set_layout(&create_info, None).unwrap();
-    }
+        unsafe { device.create_descriptor_set_layout(&create_info, None).unwrap() }
+    };
 
-    let desc_set: vk::DescriptorSet;
-    {
+    let desc_set_layouts = [desc_set_layout];
+
+    let desc_set = {
         let alloc_info = vk::DescriptorSetAllocateInfo::builder()
             .descriptor_pool(desc_pool)
-            .set_layouts(&[desc_set_layout])
+            .set_layouts(&desc_set_layouts)
             .build();
-        let sets = device.allocate_descriptor_sets(&alloc_info).unwrap();
-        desc_set = sets[0];
-    }
+        let sets = unsafe { device.allocate_descriptor_sets(&alloc_info).unwrap() };
+        sets[0]
+    };
 
     let pipeline_layout = {
         let create_info = vk::PipelineLayoutCreateInfo::builder()
-            .set_layouts(&[desc_set_layout])
+            .set_layouts(&desc_set_layouts)
             .build();
-        device.create_pipeline_layout(&create_info, None).unwrap()
+        unsafe { device.create_pipeline_layout(&create_info, None).unwrap() }
     };
 
     //Create SSBO
@@ -327,51 +329,50 @@ fn main() {
     };
 
     {
-        let buf_info = vk::DescriptorBufferInfo::builder()
+        let buf_info = [vk::DescriptorBufferInfo::builder()
             .buffer(storage_buffer)
             .offset(0)
             .range(BUFFER_SIZE)
-            .build();
-        let write = vk::WriteDescriptorSet::builder()
+            .build()];
+        let write = [vk::WriteDescriptorSet::builder()
             .dst_set(desc_set)
             .dst_binding(0)
             .dst_array_element(0)
             .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-            .buffer_info(&[buf_info])
-            .build();
+            .buffer_info(&buf_info)
+            .build()];
 
-        device.update_descriptor_sets(&[write], &[]);
+        unsafe { device.update_descriptor_sets(&write, &[]) };
     }
 
-    let shader_module = {
-        let shader_spv = include_bytes!("../comp.spv");
-        assert!(shader_spv.len() % 4 == 0, "Invalid SPV format");
-
-        let mut spv_code = vec![0; shader_spv.len() / 4];
-        NativeEndian::read_u32_into(shader_spv, spv_code.as_mut_slice());
-
-        let create_info = vk::ShaderModuleCreateInfo::builder()
-            .code(spv_code.as_slice())
-            .build();
-        device.create_shader_module(&create_info, None).unwrap()
-    };
-
     let pipeline = {
+        let shader_module = {
+            let shader_spv = include_bytes!("../comp.spv");
+            assert!(shader_spv.len() % 4 == 0, "Invalid SPV format");
+
+            let mut spv_code = vec![0; shader_spv.len() / 4];
+            NativeEndian::read_u32_into(shader_spv, spv_code.as_mut_slice());
+
+            let create_info = vk::ShaderModuleCreateInfo::builder()
+                .code(spv_code.as_slice())
+                .build();
+            unsafe { device.create_shader_module(&create_info, None).unwrap() }
+        };
+
         let entrypoint = CString::new("main").unwrap();
         let shader_stage = vk::PipelineShaderStageCreateInfo::builder()
             .stage(vk::ShaderStageFlags::COMPUTE)
             .module(shader_module)
             .name(&entrypoint)
             .build();
-        let create_info = vk::ComputePipelineCreateInfo::builder()
+        let create_info = [vk::ComputePipelineCreateInfo::builder()
             .stage(shader_stage)
             .layout(pipeline_layout)
-            .build();
-        let pipelines = device.create_compute_pipelines(vk::PipelineCache::null(), &[create_info], None).unwrap();
+            .build()];
+        let pipelines = unsafe { device.create_compute_pipelines(vk::PipelineCache::null(), &create_info, None).unwrap() };
+        unsafe { device.destroy_shader_module(shader_module, None) };
         pipelines[0]
     };
-
-    device.destroy_shader_module(shader_module, None);
 
     let g_pipeline = {
         let f_spv = include_bytes!("../frag.spv");
@@ -386,12 +387,12 @@ fn main() {
         let create_info = vk::ShaderModuleCreateInfo::builder()
             .code(f_code.as_slice())
             .build();
-        let f_mod = device.create_shader_module(&create_info, None).unwrap();
+        let f_mod = unsafe { device.create_shader_module(&create_info, None).unwrap() };
 
         let create_info = vk::ShaderModuleCreateInfo::builder()
             .code(v_code.as_slice())
             .build();
-        let v_mod = device.create_shader_module(&create_info, None).unwrap();
+        let v_mod = unsafe { device.create_shader_module(&create_info, None).unwrap() };
 
         let entrypoint = CString::new("main").unwrap();
         let v_stage = vk::PipelineShaderStageCreateInfo::builder()
@@ -456,8 +457,10 @@ fn main() {
             .attachments(&blend_attachment)
             .build();
 
-        let create_info = vk::GraphicsPipelineCreateInfo::builder()
-            .stages(&[v_stage, f_stage])
+        let stages = [v_stage, f_stage];
+
+        let create_info = [vk::GraphicsPipelineCreateInfo::builder()
+            .stages(&stages)
             .vertex_input_state(&vertex_input)
             .input_assembly_state(&input_assembly)
             .viewport_state(&view_state)
@@ -467,36 +470,31 @@ fn main() {
             .render_pass(render_pass)
             .subpass(0)
             .layout(pipeline_layout)
-            .build();
-        let pipelines = device.create_graphics_pipelines(vk::PipelineCache::null(), &[create_info], None).unwrap();
-        device.destroy_shader_module(v_mod, None);
-        device.destroy_shader_module(f_mod, None);
+            .build()];
+        let pipelines = unsafe { device.create_graphics_pipelines(vk::PipelineCache::null(), &create_info, None).unwrap() };
+        unsafe {
+            device.destroy_shader_module(v_mod, None);
+            device.destroy_shader_module(f_mod, None);
+        }
         pipelines[0]
     };
 
-    let command_buffer: vk::CommandBuffer;
-    let graphics_command_buffer: vk::CommandBuffer;
-    {
+    let (command_buffer, graphics_command_buffer) = {
         let alloc_info = vk::CommandBufferAllocateInfo::builder()
             .command_pool(pool)
             .level(vk::CommandBufferLevel::PRIMARY)
             .command_buffer_count(2)
             .build();
 
-        let buffers = device.allocate_command_buffers(&alloc_info).unwrap();
-        command_buffer = buffers[0];
-        graphics_command_buffer = buffers[1];
-    }
+        let buffers = unsafe { device.allocate_command_buffers(&alloc_info).unwrap() };
+        (buffers[0], buffers[1])
+    };
 
-    let image_ready_semaphore: vk::Semaphore;
-    let render_finished_semaphore: vk::Semaphore;
-    {
+    let (image_ready_semaphore, render_finished_semaphore) = {
         let create_info = vk::SemaphoreCreateInfo::builder().build();
-        image_ready_semaphore = device.create_semaphore(&create_info, None).unwrap();
-        render_finished_semaphore = device.create_semaphore(&create_info, None).unwrap();
-    }
+        unsafe { (device.create_semaphore(&create_info, None).unwrap(), device.create_semaphore(&create_info, None).unwrap()) }
+    };
 
-    println!("Hello, world!");
     let mut events = sdl_context.event_pump().unwrap();
     'running: loop {
         for event in events.poll_iter() {
@@ -508,82 +506,100 @@ fn main() {
             }
         }
 
-        device.device_wait_idle().unwrap();
+        unsafe { device.device_wait_idle().unwrap() };
 
         let begin_info = vk::CommandBufferBeginInfo::builder()
             .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)
             .build();
-        device.begin_command_buffer(command_buffer, &begin_info).unwrap();
-        device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::COMPUTE, pipeline);
-        device.cmd_bind_descriptor_sets(command_buffer, vk::PipelineBindPoint::COMPUTE, pipeline_layout, 0, &[desc_set], &[]);
-        device.cmd_dispatch(command_buffer, 1, 1, 1);
-        device.end_command_buffer(command_buffer).unwrap();
 
-        let submit = vk::SubmitInfo::builder()
-            .command_buffers(&[command_buffer])
-            .build();
+        let sets = [desc_set];
+        unsafe {
+            device.begin_command_buffer(command_buffer, &begin_info).unwrap();
+            device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::COMPUTE, pipeline);
+            device.cmd_bind_descriptor_sets(command_buffer, vk::PipelineBindPoint::COMPUTE, pipeline_layout, 0, &sets, &[]);
+            device.cmd_dispatch(command_buffer, 1, 1, 1);
+            device.end_command_buffer(command_buffer).unwrap();
+        }
 
-        device.queue_submit(queue, &[submit], vk::Fence::null()).unwrap();
+        let buffers = [command_buffer];
+        let submit = [vk::SubmitInfo::builder()
+            .command_buffers(&buffers)
+            .build()];
 
-        let (fb_idx, _) = swapchain_ext.acquire_next_image(swapchain, std::u64::MAX, image_ready_semaphore, vk::Fence::null()).unwrap();
+        unsafe { device.queue_submit(queue, &submit, vk::Fence::null()).unwrap() };
 
-        device.begin_command_buffer(graphics_command_buffer, &begin_info).unwrap();
+        let (fb_idx, _) = unsafe { swapchain_ext.acquire_next_image(swapchain, std::u64::MAX, image_ready_semaphore, vk::Fence::null()).unwrap() };
+
+        unsafe { device.begin_command_buffer(graphics_command_buffer, &begin_info).unwrap() };
         let clear_value = vk::ClearColorValue { float32: [0.0, 0.0, 0.0, 1.0 ]};
-        let clear_value = vk::ClearValue {color: clear_value};
+        let clear_value = [vk::ClearValue {color: clear_value}];
         let rp_begin_info = vk::RenderPassBeginInfo::builder()
             .render_pass(render_pass)
             .framebuffer(framebuffers[fb_idx as usize])
             .render_area(vk::Rect2D::builder().offset(vk::Offset2D::builder().x(0).y(0).build()).extent(vk::Extent2D::builder().width(640).height(480).build()).build())
-            .clear_values(&[clear_value])
+            .clear_values(&clear_value)
             .build();
-        device.cmd_begin_render_pass(graphics_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
-        device.cmd_bind_pipeline(graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, g_pipeline);
-        device.cmd_bind_descriptor_sets(graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline_layout, 0, &[desc_set], &[]);
-        device.cmd_draw(graphics_command_buffer, NUM_PARTICLES, 1, 0, 0);
-        device.cmd_end_render_pass(graphics_command_buffer);
-        device.end_command_buffer(graphics_command_buffer).unwrap();
 
-        let submit  = vk::SubmitInfo::builder()
-            .wait_semaphores(&[image_ready_semaphore])
-            .wait_dst_stage_mask(&[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT])
-            .command_buffers(&[graphics_command_buffer])
-            .signal_semaphores(&[render_finished_semaphore])
-            .build();
-        device.queue_submit(graphics_queue, &[submit], vk::Fence::null()).unwrap();
+        unsafe {
+            device.cmd_begin_render_pass(graphics_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
+            device.cmd_bind_pipeline(graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, g_pipeline);
+            device.cmd_bind_descriptor_sets(graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline_layout, 0, &sets, &[]);
+            device.cmd_draw(graphics_command_buffer, NUM_PARTICLES, 1, 0, 0);
+            device.cmd_end_render_pass(graphics_command_buffer);
+            device.end_command_buffer(graphics_command_buffer).unwrap();
+        }
+
+        let wait_semaphores = [image_ready_semaphore];
+        let dst_stage_mask = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+        let cmd_buffers = [graphics_command_buffer];
+        let signal_semaphores = [render_finished_semaphore];
+
+        let submit  = [vk::SubmitInfo::builder()
+            .wait_semaphores(&wait_semaphores)
+            .wait_dst_stage_mask(&dst_stage_mask)
+            .command_buffers(&cmd_buffers)
+            .signal_semaphores(&signal_semaphores)
+            .build()];
+        unsafe { device.queue_submit(graphics_queue, &submit, vk::Fence::null()).unwrap() };
+
+        let wait_semaphores = [render_finished_semaphore];
+        let swapchains = [swapchain];
+        let image_indices = [fb_idx];
 
         let present_info = vk::PresentInfoKHR::builder()
-            .wait_semaphores(&[render_finished_semaphore])
-            .swapchains(&[swapchain])
-            .image_indices(&[fb_idx])
+            .wait_semaphores(&wait_semaphores)
+            .swapchains(&swapchains)
+            .image_indices(&image_indices)
             .build();
-        swapchain_ext.queue_present(graphics_queue, &present_info).unwrap();
+        unsafe { swapchain_ext.queue_present(graphics_queue, &present_info).unwrap() };
     }
-    device.device_wait_idle().unwrap();
+    unsafe { 
+        device.device_wait_idle().unwrap();
 
-    //Cleanup
-    device.free_command_buffers(pool, &[command_buffer, graphics_command_buffer]);
-    device.destroy_semaphore(image_ready_semaphore, None);
-    device.destroy_semaphore(render_finished_semaphore, None);
-    allocator.destroy_buffer(storage_buffer, &storage_allocation).unwrap();
-    drop(allocator);
+        //Cleanup
+        device.free_command_buffers(pool, &[command_buffer, graphics_command_buffer]);
+        device.destroy_semaphore(image_ready_semaphore, None);
+        device.destroy_semaphore(render_finished_semaphore, None);
+        allocator.destroy_buffer(storage_buffer, &storage_allocation).unwrap();
+        drop(allocator);
 
-    for iv in swapchain_image_views.iter() {
-        device.destroy_image_view(*iv, None);
+        for iv in swapchain_image_views.iter() {
+            device.destroy_image_view(*iv, None);
+        }
+        device.destroy_pipeline_layout(pipeline_layout, None);
+        device.destroy_render_pass(render_pass, None);
+        device.destroy_pipeline(pipeline, None);
+        device.destroy_pipeline(g_pipeline, None);
+        device.destroy_descriptor_pool(desc_pool, None);
+        device.destroy_descriptor_set_layout(desc_set_layout, None);
+        for fb in framebuffers.iter() {
+            device.destroy_framebuffer(*fb, None);
+        }
+        device.destroy_command_pool(pool, None);
+        swapchain_ext.destroy_swapchain(swapchain, None);
+        device.destroy_device(None);
+
+        debug_report_loader.destroy_debug_report_callback(debug_call_back, None);
+        instance.destroy_instance(None);
     }
-    device.destroy_pipeline_layout(pipeline_layout, None);
-    device.destroy_render_pass(render_pass, None);
-    device.destroy_pipeline(pipeline, None);
-    device.destroy_pipeline(g_pipeline, None);
-    device.destroy_descriptor_pool(desc_pool, None);
-    device.destroy_descriptor_set_layout(desc_set_layout, None);
-    for fb in framebuffers.iter() {
-        device.destroy_framebuffer(*fb, None);
-    }
-    device.destroy_command_pool(pool, None);
-    swapchain_ext.destroy_swapchain(swapchain, None);
-    device.destroy_device(None);
-
-    debug_report_loader.destroy_debug_report_callback(debug_call_back, None);
-    instance.destroy_instance(None);
-}
 }
