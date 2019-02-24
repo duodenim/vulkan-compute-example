@@ -1,3 +1,6 @@
 /target
 **/*.rs.bk
 .vscode/
+
+# - Ignore DLLs (necessary for SDL2 on windows)
+*.dll
