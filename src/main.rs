@@ -98,31 +98,31 @@ fn main() {
 
     let queue_props = unsafe { instance.get_physical_device_queue_family_properties(physical_device) };
 
-    let mut queue_index = std::u32::MAX;
-    let mut g_queue_index = std::u32::MAX;
+    let mut compute_queue_family_index = std::u32::MAX;
+    let mut graphics_queue_family_index = std::u32::MAX;
     for (i, queue) in queue_props.iter().enumerate() {
         if queue.queue_flags.contains(vk::QueueFlags::COMPUTE) {
-            queue_index = i as u32;
+            compute_queue_family_index = i as u32;
         }
         let supports_present = unsafe { surface_ext.get_physical_device_surface_support(physical_device, i as u32, surface) };
         if queue.queue_flags.contains(vk::QueueFlags::GRAPHICS) && supports_present {
-            g_queue_index = i as u32;
+            graphics_queue_family_index = i as u32;
         }
     }
 
-    assert!(queue_index != std::u32::MAX, "No compute queue found!");
-    assert!(g_queue_index != std::u32::MAX, "No graphics queue found!");
+    assert!(compute_queue_family_index != std::u32::MAX, "No compute queue family found!");
+    assert!(graphics_queue_family_index != std::u32::MAX, "No graphics queue family found!");
 
     let priorities = [1.0];
 
     let mut queue_infos = vec![vk::DeviceQueueCreateInfo::builder()
-                        .queue_family_index(queue_index)
+                        .queue_family_index(compute_queue_family_index)
                         .queue_priorities(&priorities)
                         .build()];
 
-    if queue_index != g_queue_index {
+    if compute_queue_family_index != graphics_queue_family_index {
         queue_infos.push(vk::DeviceQueueCreateInfo::builder()
-                            .queue_family_index(g_queue_index)
+                            .queue_family_index(graphics_queue_family_index)
                             .queue_priorities(&priorities)
                             .build());
     }
@@ -143,13 +143,26 @@ fn main() {
             };
             vk_mem::Allocator::new(&create_info).unwrap()
     };
-    let queue = unsafe { device.get_device_queue(queue_index, 0) };
-    let graphics_queue = unsafe { device.get_device_queue(g_queue_index, 0) };
-    let pool = {
+    let compute_queue = unsafe { device.get_device_queue(compute_queue_family_index, 0) };
+    let graphics_queue = unsafe { device.get_device_queue(graphics_queue_family_index, 0) };
+    let compute_command_pool = {
         let pool_create = vk::CommandPoolCreateInfo::builder()
             .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
-            .queue_family_index(queue_index);
+            .queue_family_index(compute_queue_family_index);
         unsafe { device.create_command_pool(&pool_create, None).unwrap() }
+    };
+
+    //If the graphics queue family is separate from the compute queue family, create a separate command pool
+    //just for graphics
+    let graphics_command_pool = {
+        if compute_queue_family_index == graphics_queue_family_index {
+            compute_command_pool
+        } else {
+            let pool_create = vk::CommandPoolCreateInfo::builder()
+                .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
+                .queue_family_index(graphics_queue_family_index);
+            unsafe { device.create_command_pool(&pool_create, None).unwrap() }
+        }
     };
 
     let desc_pool = {
@@ -345,7 +358,7 @@ fn main() {
         unsafe { device.update_descriptor_sets(&write, &[]) };
     }
 
-    let pipeline = {
+    let compute_pipeline = {
         let shader_module = {
             let shader_spv = include_bytes!("../comp.spv");
             assert!(shader_spv.len() % 4 == 0, "Invalid SPV format");
@@ -374,7 +387,7 @@ fn main() {
         pipelines[0]
     };
 
-    let g_pipeline = {
+    let graphics_pipeline = {
         let f_spv = include_bytes!("../frag.spv");
         let v_spv = include_bytes!("../vert.spv");
 
@@ -479,15 +492,24 @@ fn main() {
         pipelines[0]
     };
 
-    let (command_buffer, graphics_command_buffer) = {
+    let compute_command_buffer = {
         let alloc_info = vk::CommandBufferAllocateInfo::builder()
-            .command_pool(pool)
+            .command_pool(compute_command_pool)
             .level(vk::CommandBufferLevel::PRIMARY)
-            .command_buffer_count(2)
-            .build();
+            .command_buffer_count(1);
 
         let buffers = unsafe { device.allocate_command_buffers(&alloc_info).unwrap() };
-        (buffers[0], buffers[1])
+        buffers[0]
+    };
+
+    let graphics_command_buffer = {
+        let alloc_info = vk::CommandBufferAllocateInfo::builder()
+            .command_pool(graphics_command_pool)
+            .level(vk::CommandBufferLevel::PRIMARY)
+            .command_buffer_count(1);
+
+        let buffers = unsafe { device.allocate_command_buffers(&alloc_info).unwrap() };
+        buffers[0]
     };
 
     let (image_ready_semaphore, render_finished_semaphore) = {
@@ -514,19 +536,19 @@ fn main() {
 
         let sets = [desc_set];
         unsafe {
-            device.begin_command_buffer(command_buffer, &begin_info).unwrap();
-            device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::COMPUTE, pipeline);
-            device.cmd_bind_descriptor_sets(command_buffer, vk::PipelineBindPoint::COMPUTE, pipeline_layout, 0, &sets, &[]);
-            device.cmd_dispatch(command_buffer, 1, 1, 1);
-            device.end_command_buffer(command_buffer).unwrap();
+            device.begin_command_buffer(compute_command_buffer, &begin_info).unwrap();
+            device.cmd_bind_pipeline(compute_command_buffer, vk::PipelineBindPoint::COMPUTE, compute_pipeline);
+            device.cmd_bind_descriptor_sets(compute_command_buffer, vk::PipelineBindPoint::COMPUTE, pipeline_layout, 0, &sets, &[]);
+            device.cmd_dispatch(compute_command_buffer, 1, 1, 1);
+            device.end_command_buffer(compute_command_buffer).unwrap();
         }
 
-        let buffers = [command_buffer];
+        let buffers = [compute_command_buffer];
         let submit = [vk::SubmitInfo::builder()
             .command_buffers(&buffers)
             .build()];
 
-        unsafe { device.queue_submit(queue, &submit, vk::Fence::null()).unwrap() };
+        unsafe { device.queue_submit(compute_queue, &submit, vk::Fence::null()).unwrap() };
 
         let (fb_idx, _) = unsafe { swapchain_ext.acquire_next_image(swapchain, std::u64::MAX, image_ready_semaphore, vk::Fence::null()).unwrap() };
 
@@ -542,7 +564,7 @@ fn main() {
 
         unsafe {
             device.cmd_begin_render_pass(graphics_command_buffer, &rp_begin_info, vk::SubpassContents::INLINE);
-            device.cmd_bind_pipeline(graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, g_pipeline);
+            device.cmd_bind_pipeline(graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, graphics_pipeline);
             device.cmd_bind_descriptor_sets(graphics_command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline_layout, 0, &sets, &[]);
             device.cmd_draw(graphics_command_buffer, NUM_PARTICLES, 1, 0, 0);
             device.cmd_end_render_pass(graphics_command_buffer);
@@ -577,7 +599,6 @@ fn main() {
         device.device_wait_idle().unwrap();
 
         //Cleanup
-        device.free_command_buffers(pool, &[command_buffer, graphics_command_buffer]);
         device.destroy_semaphore(image_ready_semaphore, None);
         device.destroy_semaphore(render_finished_semaphore, None);
         allocator.destroy_buffer(storage_buffer, &storage_allocation).unwrap();
@@ -588,14 +609,20 @@ fn main() {
         }
         device.destroy_pipeline_layout(pipeline_layout, None);
         device.destroy_render_pass(render_pass, None);
-        device.destroy_pipeline(pipeline, None);
-        device.destroy_pipeline(g_pipeline, None);
+        device.destroy_pipeline(compute_pipeline, None);
+        device.destroy_pipeline(graphics_pipeline, None);
         device.destroy_descriptor_pool(desc_pool, None);
         device.destroy_descriptor_set_layout(desc_set_layout, None);
         for fb in framebuffers.iter() {
             device.destroy_framebuffer(*fb, None);
         }
-        device.destroy_command_pool(pool, None);
+        if compute_command_pool != graphics_command_pool {
+            device.destroy_command_pool(compute_command_pool, None);
+            device.destroy_command_pool(graphics_command_pool, None);
+        } else {
+            device.destroy_command_pool(compute_command_pool, None);
+        }
+        
         swapchain_ext.destroy_swapchain(swapchain, None);
         device.destroy_device(None);
 
