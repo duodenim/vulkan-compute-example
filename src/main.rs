@@ -512,9 +512,9 @@ fn main() {
         buffers[0]
     };
 
-    let (image_ready_semaphore, render_finished_semaphore) = {
+    let (image_ready_semaphore, render_finished_semaphore, compute_finished_semaphore) = {
         let create_info = vk::SemaphoreCreateInfo::builder().build();
-        unsafe { (device.create_semaphore(&create_info, None).unwrap(), device.create_semaphore(&create_info, None).unwrap()) }
+        unsafe { (device.create_semaphore(&create_info, None).unwrap(), device.create_semaphore(&create_info, None).unwrap(), device.create_semaphore(&create_info, None).unwrap()) }
     };
 
     let mut events = sdl_context.event_pump().unwrap();
@@ -544,8 +544,10 @@ fn main() {
         }
 
         let buffers = [compute_command_buffer];
+        let signal_semaphores = [compute_finished_semaphore];
         let submit = [vk::SubmitInfo::builder()
             .command_buffers(&buffers)
+            .signal_semaphores(&signal_semaphores)
             .build()];
 
         unsafe { device.queue_submit(compute_queue, &submit, vk::Fence::null()).unwrap() };
@@ -571,8 +573,8 @@ fn main() {
             device.end_command_buffer(graphics_command_buffer).unwrap();
         }
 
-        let wait_semaphores = [image_ready_semaphore];
-        let dst_stage_mask = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+        let wait_semaphores = [image_ready_semaphore, compute_finished_semaphore];
+        let dst_stage_mask = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT, vk::PipelineStageFlags::VERTEX_SHADER];
         let cmd_buffers = [graphics_command_buffer];
         let signal_semaphores = [render_finished_semaphore];
 
@@ -601,6 +603,7 @@ fn main() {
         //Cleanup
         device.destroy_semaphore(image_ready_semaphore, None);
         device.destroy_semaphore(render_finished_semaphore, None);
+        device.destroy_semaphore(compute_finished_semaphore, None);
         allocator.destroy_buffer(storage_buffer, &storage_allocation).unwrap();
         drop(allocator);
 
