@@ -21,7 +21,6 @@ extern crate sdl2;
 use sdl2::event::Event;
 
 extern crate vk_mem;
-extern crate vk_sync;
 
 //Number of particles to run, must match with NUM_PARTICLES in vertex and compute shaders
 const NUM_PARTICLES: u32  = 400;
@@ -225,33 +224,25 @@ fn main() {
             .color_attachments(&attach_refs)
             .build()];
 
-        let dependency = vk::SubpassDependency::builder()
+        let present_dependency = vk::SubpassDependency::builder()
             .src_subpass(vk::SUBPASS_EXTERNAL)
             .dst_subpass(0)
             .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
             .src_access_mask(vk::AccessFlags::empty())
             .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-            .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_READ | vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+            .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
             .build();
-
-        let previous_access = vk_sync::AccessType::ComputeShaderWrite;
-        let next_access = vk_sync::AccessType::VertexShaderReadOther;
-        let mem_barrier = vk_sync::GlobalBarrier {
-            previous_accesses: [previous_access].to_vec(),
-            next_accesses: [next_access].to_vec()
-        };
-        let (src_flags, dst_flags, barrier) = vk_sync::get_memory_barrier(&mem_barrier);
 
         let compute_dependency = vk::SubpassDependency::builder()
             .src_subpass(vk::SUBPASS_EXTERNAL)
             .dst_subpass(0)
-            .src_stage_mask(src_flags)
-            .dst_stage_mask(dst_flags)
-            .src_access_mask(barrier.src_access_mask)
-            .dst_access_mask(barrier.dst_access_mask)
+            .src_stage_mask(vk::PipelineStageFlags::COMPUTE_SHADER)
+            .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+            .dst_stage_mask(vk::PipelineStageFlags::VERTEX_SHADER)
+            .dst_access_mask(vk::AccessFlags::SHADER_READ)
             .build();
 
-        let dependencies = [dependency, compute_dependency];
+        let dependencies = [present_dependency, compute_dependency];
 
         let create_info = vk::RenderPassCreateInfo::builder()
             .attachments(&attachment)
